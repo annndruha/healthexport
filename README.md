@@ -1,11 +1,5 @@
 
-<img width="360" height="151" alt="Health Connect" src="https://github.com/user-attachments/assets/3761cce5-f5f2-4090-be70-da1374c58c2c" />
-
-<a href="https://play.google.com/store/apps/details?id=com.teqxnology.healthdataexport&pcampaignid=web_share">
-  <img src="https://github.com/user-attachments/assets/1cb8443a-2312-48f4-a31b-e2eb52a95fce" alt="Get it on Google Play" width="343" height="343">
-</a>
-
-# Health Data Export
+# !!THIS IS FORK with fixes, original repo: https://github.com/teqxnology/healthexport
 
 ### Description
 Export your Health Connect data to Google Sheets or CSV. And because it pull data directly from Health Connect, it is compatible most health and fitness apps (Strava, Garmin, Fitbit, Coros, Samsung, Polar, Withings, Zepp/Amazfit, etc.). Choose which health metrics to include. Flexibility to select a date range. Supports the following data types
