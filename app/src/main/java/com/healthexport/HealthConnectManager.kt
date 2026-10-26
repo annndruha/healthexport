@@ -681,18 +681,21 @@ class HealthConnectManager(private val context: Context) {
                     )
                 )
             }
-            resp.records.firstOrNull()?.let { rec ->
-                val t = recordTime(rec)
+            resp.records.firstOrNull()?.let(::recordTime)?.let { t ->
                 if (earliest == null || t < earliest) earliest = t
             }
         }
         return earliest?.atZone(zone)?.toLocalDate()
     }
 
-    private fun recordTime(rec: Record): Instant = when (rec) {
-        is InstantaneousRecord -> rec.time
-        is IntervalRecord -> rec.startTime
-        else -> Instant.now()
+    // InstantaneousRecord / IntervalRecord are internal, so read `time` or `startTime` via its getter.
+    private fun recordTime(rec: Record): Instant? = try {
+        val getter = rec.javaClass.methods.firstOrNull {
+            it.parameterCount == 0 && (it.name == "getStartTime" || it.name == "getTime")
+        }
+        getter?.invoke(rec) as? Instant
+    } catch (_: Exception) {
+        null
     }
 
     // -------------------------
