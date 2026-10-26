@@ -5,9 +5,11 @@ import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.text.Spanned
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
@@ -20,6 +22,7 @@ import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.healthexport.models.ExportConfig
+import com.healthexport.models.HealthReadResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -102,7 +105,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnExportCsv: Button
     private lateinit var txtStatus: TextView
-    private lateinit var txtLastExport: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var txtProgress: TextView
 
@@ -232,7 +234,6 @@ class MainActivity : AppCompatActivity() {
 
         btnExportCsv = findViewById(R.id.btnExportCsv)
         txtStatus = findViewById(R.id.txtStatus)
-        txtLastExport = findViewById(R.id.txtLastExport)
         progressBar = findViewById(R.id.progressBar)
         txtProgress = findViewById(R.id.txtProgress)
         defaultStatusColors = txtStatus.textColors
@@ -259,14 +260,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateLastExportLabel() {
-        val df = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
+    private fun formatTime(ms: Long): String =
+        SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(ms))
+
+    private fun lastExportText(): String {
         val last = prefs.getLong("last_export_manual", 0L)
-        txtLastExport.text = "Last export: " + if (last > 0L) df.format(Date(last)) else "Never"
+        return if (last > 0L) formatTime(last) else "never"
     }
 
     private fun loadPrefsIntoUi() {
-        updateLastExportLabel()
+        showStatus("Ready. Last export: ${lastExportText()}")
 
         val saferEnabled = prefs.getBoolean("safer_export_enabled", false)
         switchSaferExport.isChecked = saferEnabled
@@ -574,11 +577,12 @@ class MainActivity : AppCompatActivity() {
                 if (res.files.isEmpty()) {
                     showStatus("No data to export for the selected types and period", StatusKind.WARNING)
                 } else {
-                    prefs.edit().putLong("last_export_manual", System.currentTimeMillis()).apply()
-                    updateLastExportLabel()
+                    val now = System.currentTimeMillis()
+                    prefs.edit().putLong("last_export_manual", now).apply()
                     val days = dailyData.keys
                     showStatus(
-                        "Saved ${res.files.size} file(s) to ${res.location}:\n" +
+                        "Export finished ${formatTime(now)}\n\n" +
+                                "Saved ${res.files.size} file(s) to ${res.location}:\n" +
                                 res.files.joinToString("\n") { "• ${it.first}" } +
                                 "\n\nData: ${days.size} day(s), ${days.first()} … ${days.last()}" +
                                 if (result.warnings.isEmpty()) "" else "\n\n${result.warnings.size} warning(s), see the report.",
@@ -586,11 +590,17 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-                showReportDialog(result.summary, result.warnings)
+                showReportDialog(result)
             } catch (e: HealthConnectManager.ExportInterruptedException) {
-                showStatus(e.message ?: "Export interrupted", StatusKind.ERROR)
+                showStatus(
+                    (e.message ?: "Export interrupted") + "\n\nLast successful export: ${lastExportText()}",
+                    StatusKind.ERROR
+                )
             } catch (e: Exception) {
-                showStatus("Export failed: ${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
+                showStatus(
+                    "Export failed: ${e.message ?: e.javaClass.simpleName}\n\nLast successful export: ${lastExportText()}",
+                    StatusKind.ERROR
+                )
             } finally {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 showProgress(false)
@@ -600,21 +610,84 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showReportDialog(summary: List<String>, warnings: List<String>) {
-        val text = buildString {
-            if (warnings.isNotEmpty()) {
-                append("Warnings:\n")
-                append(warnings.joinToString("\n\n") { "• $it" })
-                append("\n\n")
-            }
-            append("Received from Health Connect:\n")
-            append(summary.joinToString("\n"))
+    // -------------------------
+    // Export report dialog
+    // -------------------------
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun showReportDialog(result: HealthReadResult) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
         }
+
+        fun section(title: String) {
+            content.addView(TextView(this).apply {
+                text = title
+                textSize = 15f
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(12), 0, dp(4))
+            })
+        }
+
+        fun line(text: String, color: Int? = null, sizeSp: Float = 14f) {
+            content.addView(TextView(this).apply {
+                this.text = text
+                textSize = sizeSp
+                color?.let { setTextColor(it) }
+                setPadding(0, dp(2), 0, dp(2))
+            })
+        }
+
+        section("Period")
+        line("${result.fromDay} … ${result.toDay}")
+        line(
+            "Data older than 30 days: " + if (result.historyGranted) "allowed" else "not allowed",
+            if (result.historyGranted) null else COLOR_WARNING
+        )
+
+        if (result.warnings.isNotEmpty()) {
+            section("Warnings")
+            result.warnings.forEach { line("• $it", COLOR_WARNING) }
+        }
+
+        section("Received from Health Connect")
+        val table = TableLayout(this)
+        table.addView(reportRow(listOf("Data type", "Count", "First", "Last"), header = true, shaded = true))
+        result.coverage.forEachIndexed { i, c ->
+            val cells = if (c.count == 0) {
+                listOf(c.label, "—", "—", "—")
+            } else {
+                val unit = if (c.unit == "days") "d" else "rec"
+                listOf(c.label, "${c.count} $unit", c.first.orEmpty(), c.last.orEmpty())
+            }
+            table.addView(reportRow(cells, header = false, shaded = i % 2 == 1, empty = c.count == 0))
+        }
+        content.addView(HorizontalScrollView(this).apply { addView(table) })
+        line("d = days with data, rec = records", sizeSp = 12f)
+
         AlertDialog.Builder(this)
-            .setTitle(if (warnings.isEmpty()) "Export report" else "Export finished with warnings")
-            .setMessage(text)
+            .setTitle(if (result.warnings.isEmpty()) "Export report" else "Export finished with warnings")
+            .setView(ScrollView(this).apply { addView(content) })
             .setPositiveButton("OK", null)
             .show()
+    }
+
+    private fun reportRow(cells: List<String>, header: Boolean, shaded: Boolean, empty: Boolean = false): TableRow {
+        val row = TableRow(this)
+        if (shaded) row.setBackgroundColor(if (header) COLOR_HEADER_BG else COLOR_STRIPE_BG)
+        cells.forEachIndexed { col, text ->
+            row.addView(TextView(this).apply {
+                this.text = text
+                textSize = 13f
+                setPadding(dp(6), dp(4), dp(6), dp(4))
+                if (header) setTypeface(typeface, Typeface.BOLD)
+                if (col == 1) gravity = Gravity.END
+                if (empty) alpha = 0.5f
+            })
+        }
+        return row
     }
 
     private fun showAllTimeWarningDialog(onContinue: () -> Unit) {
@@ -660,5 +733,9 @@ class MainActivity : AppCompatActivity() {
         val COLOR_SUCCESS = Color.parseColor("#388E3C")
         val COLOR_WARNING = Color.parseColor("#F57C00")
         val COLOR_ERROR = Color.parseColor("#D32F2F")
+
+        // Translucent grey reads well on both light and dark dialog backgrounds.
+        val COLOR_HEADER_BG = Color.parseColor("#33808080")
+        val COLOR_STRIPE_BG = Color.parseColor("#14808080")
     }
 }

@@ -70,10 +70,21 @@ data class ExportConfig(
     val daysBack: Int = 7
 )
 
+/** What Health Connect returned for one data type; [unit] is "days" or "records". */
+data class TypeCoverage(
+    val label: String,
+    val unit: String,
+    val count: Int,
+    val first: String?,
+    val last: String?
+)
+
 data class HealthReadResult(
     val data: Map<String, DailyHealthData>,
     val warnings: List<String>,
-    val summary: List<String>,
+    val coverage: List<TypeCoverage>,
+    val fromDay: String,
+    val toDay: String,
     val historyGranted: Boolean
 )
 

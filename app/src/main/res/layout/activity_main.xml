@@ -576,14 +576,5 @@
             android:text="Status: Ready"
             android:textIsSelectable="true" />
 
-        <TextView
-            android:id="@+id/txtLastExport"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="Last export: Never"
-            android:textAlignment="center"
-            android:textSize="12sp" />
-
     </LinearLayout>
 </ScrollView>
