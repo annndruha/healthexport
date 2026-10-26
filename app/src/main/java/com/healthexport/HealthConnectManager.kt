@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.time.Duration
 import java.time.Instant
@@ -116,8 +117,13 @@ class HealthConnectManager(private val context: Context) {
     /**
      * Reads the last [ExportConfig.daysBack] calendar days (including today), or everything
      * when daysBack < 0. Data is sorted by date ("yyyy-MM-dd").
+     *
+     * [onProgress] gets the current step and overall progress 0..1; it is called on a background thread.
      */
-    suspend fun readHealthDataByDay(config: ExportConfig): HealthReadResult =
+    suspend fun readHealthDataByDay(
+        config: ExportConfig,
+        onProgress: (label: String, fraction: Float) -> Unit = { _, _ -> }
+    ): HealthReadResult =
         withContext(Dispatchers.IO) {
             val zone = ZoneId.systemDefault()
             val granted = getGrantedPermissions()
@@ -129,6 +135,7 @@ class HealthConnectManager(private val context: Context) {
             val readable = selected.filter(::canRead)
 
             val startDay = if (config.daysBack < 0) {
+                onProgress("Looking for the oldest data", 0f)
                 findEarliestDay(readable, zone) ?: today
             } else {
                 today.minusDays((config.daysBack - 1).coerceAtLeast(0).toLong())
@@ -140,7 +147,10 @@ class HealthConnectManager(private val context: Context) {
                 endDayExclusive = today.plusDays(1),
                 start = startDay.atStartOfDay(zone).toInstant(),
                 end = Instant.now(),
-                historyGranted = historyGranted
+                historyGranted = historyGranted,
+                // Every readable type is exactly one aggregateByDay / readEach call.
+                totalTasks = readable.size,
+                onProgress = onProgress
             )
 
             val missing = selected.filterNot(::canRead)
@@ -182,7 +192,7 @@ class HealthConnectManager(private val context: Context) {
                 )
             }
 
-            HealthReadResult(data, s.warnings(), historyGranted)
+            HealthReadResult(data, s.warnings(), s.summary(), historyGranted)
         }
 
     // -------------------------
@@ -225,27 +235,27 @@ class HealthConnectManager(private val context: Context) {
                 out.put(day, "Active calories burned", r[ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL]?.inKilocalories?.round2(), r.origins())
             }
         }
+        // Power and speed come from raw samples: some Health Connect versions reject their min/max
+        // aggregation ("Unsupported aggregation type Speed_series_speed_min").
         if (config.includePower && canRead(PowerRecord::class)) {
-            aggregateByDay("Power", setOf(PowerRecord.POWER_MIN, PowerRecord.POWER_MAX, PowerRecord.POWER_AVG), s) { day, r ->
-                out.putMinMaxAvg(
-                    day, "Power", "W",
-                    r[PowerRecord.POWER_MIN]?.inWatts,
-                    r[PowerRecord.POWER_MAX]?.inWatts,
-                    r[PowerRecord.POWER_AVG]?.inWatts,
-                    r.origins()
-                )
+            val stats = HashMap<String, Stats>()
+            readEach("Power", PowerRecord::class, s.start, s.end, s, dedupe = true) { rec ->
+                val origin = rec.metadata.dataOrigin.packageName
+                rec.samples.forEach { smp ->
+                    if (smp.time >= s.start) stats.getOrPut(s.dayOf(smp.time)) { Stats() }.add(smp.power.inWatts, origin)
+                }
             }
+            out.putStats(stats, "Power", "W")
         }
         if (config.includeSpeed && canRead(SpeedRecord::class)) {
-            aggregateByDay("Speed", setOf(SpeedRecord.SPEED_MIN, SpeedRecord.SPEED_MAX, SpeedRecord.SPEED_AVG), s) { day, r ->
-                out.putMinMaxAvg(
-                    day, "Speed", "m/s",
-                    r[SpeedRecord.SPEED_MIN]?.inMetersPerSecond,
-                    r[SpeedRecord.SPEED_MAX]?.inMetersPerSecond,
-                    r[SpeedRecord.SPEED_AVG]?.inMetersPerSecond,
-                    r.origins()
-                )
+            val stats = HashMap<String, Stats>()
+            readEach("Speed", SpeedRecord::class, s.start, s.end, s, dedupe = true) { rec ->
+                val origin = rec.metadata.dataOrigin.packageName
+                rec.samples.forEach { smp ->
+                    if (smp.time >= s.start) stats.getOrPut(s.dayOf(smp.time)) { Stats() }.add(smp.speed.inMetersPerSecond, origin)
+                }
             }
+            out.putStats(stats, "Speed", "m/s")
         }
         if (config.includeWheelchairPushes && canRead(WheelchairPushesRecord::class)) {
             aggregateByDay("Wheelchair pushes", setOf(WheelchairPushesRecord.COUNT_TOTAL), s) { day, r ->
@@ -646,22 +656,64 @@ class HealthConnectManager(private val context: Context) {
         var rateLimited = false
     }
 
+    /** What was actually received for one data type: count and first/last day. */
+    private class Coverage(val unit: String) {
+        var count = 0
+        var first: String? = null
+        var last: String? = null
+    }
+
     private inner class Session(
         val zone: ZoneId,
         val startDay: LocalDate,
         val endDayExclusive: LocalDate,
         val start: Instant,
         val end: Instant,
-        val historyGranted: Boolean
+        val historyGranted: Boolean,
+        private val totalTasks: Int,
+        private val onProgress: (String, Float) -> Unit
     ) {
         private val notes = mutableListOf<String>()
         private val failures = LinkedHashMap<String, Failure>()
+        private val coverage = LinkedHashMap<String, Coverage>()
         private var historySkippedChunks = 0
+        private var doneTasks = 0
 
         fun dayOf(t: Instant): String = t.atZone(zone).toLocalDate().format(dayFmt)
 
         fun warn(message: String) {
             notes += message
+        }
+
+        fun progress(label: String, chunk: Int, chunks: Int) {
+            val f = if (totalTasks == 0) 1f
+            else (doneTasks + chunk.toFloat() / chunks.coerceAtLeast(1)) / totalTasks
+            onProgress(label, f.coerceIn(0f, 1f))
+        }
+
+        fun taskDone() {
+            doneTasks++
+        }
+
+        fun startCoverage(label: String, unit: String) {
+            coverage.getOrPut(label) { Coverage(unit) }
+        }
+
+        fun cover(label: String, day: String) {
+            val c = coverage[label] ?: return
+            c.count++
+            val first = c.first
+            val last = c.last
+            if (first == null || day < first) c.first = day
+            if (last == null || day > last) c.last = day
+        }
+
+        fun summary(): List<String> = buildList {
+            add("Period: $startDay … ${endDayExclusive.minusDays(1)}")
+            add("Data older than 30 days: " + if (historyGranted) "allowed" else "NOT allowed")
+            coverage.forEach { (label, c) ->
+                add(if (c.count == 0) "$label: no data" else "$label: ${c.count} ${c.unit}, ${c.first} … ${c.last}")
+            }
         }
 
         /** Records a failed chunk, or rethrows when the whole export must stop. */
@@ -769,10 +821,16 @@ class HealthConnectManager(private val context: Context) {
         return earliest?.atZone(zone)?.toLocalDate()
     }
 
+    private val timeGetters = HashMap<Class<*>, Method?>()
+
     // InstantaneousRecord / IntervalRecord are internal, so read `time` or `startTime` via its getter.
     private fun recordTime(rec: Record): Instant? = try {
-        val getter = rec.javaClass.methods.firstOrNull {
-            it.parameterCount == 0 && (it.name == "getStartTime" || it.name == "getTime")
+        val getter = synchronized(timeGetters) {
+            timeGetters.getOrPut(rec.javaClass) {
+                rec.javaClass.methods.firstOrNull {
+                    it.parameterCount == 0 && (it.name == "getStartTime" || it.name == "getTime")
+                }
+            }
         }
         getter?.invoke(rec) as? Instant
     } catch (_: Exception) {
@@ -790,8 +848,14 @@ class HealthConnectManager(private val context: Context) {
         consume: (String, AggregationResult) -> Unit
     ) {
         val chunkDays = if (saferExportMode) SAFER_AGGREGATE_CHUNK_DAYS else AGGREGATE_CHUNK_DAYS
+        val totalDays = Duration.between(s.startDay.atStartOfDay(), s.endDayExclusive.atStartOfDay()).toDays()
+        val chunks = ((totalDays + chunkDays - 1) / chunkDays).toInt()
+        s.startCoverage(label, "days")
+
+        var chunk = 0
         var from = s.startDay
         while (from < s.endDayExclusive) {
+            s.progress(label, chunk++, chunks)
             val to = minOf(from.plusDays(chunkDays), s.endDayExclusive)
             val chunkStart = from
             try {
@@ -805,13 +869,18 @@ class HealthConnectManager(private val context: Context) {
                     )
                 }
                 groups.forEach { g ->
-                    if (metrics.any { it in g.result }) consume(g.startTime.toLocalDate().format(dayFmt), g.result)
+                    if (metrics.any { it in g.result }) {
+                        val day = g.startTime.toLocalDate().format(dayFmt)
+                        s.cover(label, day)
+                        consume(day, g.result)
+                    }
                 }
             } catch (e: Exception) {
                 s.handle(label, e)
             }
             from = to
         }
+        s.taskDone()
     }
 
     /**
@@ -830,9 +899,13 @@ class HealthConnectManager(private val context: Context) {
         val step = Duration.ofDays(if (saferExportMode) SAFER_RAW_CHUNK_DAYS else RAW_CHUNK_DAYS)
         val pageSize = if (saferExportMode) SAFER_PAGE_SIZE else PAGE_SIZE
         val seen = if (dedupe) HashSet<String>() else null
+        val chunks = ((Duration.between(start, end).toMillis() + step.toMillis() - 1) / step.toMillis()).toInt()
+        s.startCoverage(label, "records")
 
+        var chunk = 0
         var from = start
         while (from < end) {
+            s.progress(label, chunk++, chunks)
             val to = minOf(from.plus(step), end)
             val chunkStart = from
             try {
@@ -850,7 +923,10 @@ class HealthConnectManager(private val context: Context) {
                         )
                     }
                     resp.records.forEach { rec ->
-                        if (seen == null || seen.add(rec.metadata.id)) consume(rec)
+                        if (seen == null || seen.add(rec.metadata.id)) {
+                            recordTime(rec)?.let { s.cover(label, s.dayOf(it)) }
+                            consume(rec)
+                        }
                     }
                     pageToken = resp.pageToken
                 } while (!pageToken.isNullOrEmpty())
@@ -859,6 +935,7 @@ class HealthConnectManager(private val context: Context) {
             }
             from = to
         }
+        s.taskDone()
     }
 
     /** Runs a Health Connect request, retrying with backoff on rate limiting. Safer mode also paces requests. */

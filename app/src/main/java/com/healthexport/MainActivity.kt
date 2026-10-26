@@ -3,6 +3,8 @@ package com.healthexport
 import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.text.Spanned
@@ -102,6 +104,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtStatus: TextView
     private lateinit var txtLastExport: TextView
     private lateinit var progressBar: ProgressBar
+    private lateinit var txtProgress: TextView
+
+    private enum class StatusKind { INFO, SUCCESS, WARNING, ERROR }
+    private var defaultStatusColors: ColorStateList? = null
 
     private lateinit var healthConnectManager: HealthConnectManager
 
@@ -123,7 +129,7 @@ class MainActivity : AppCompatActivity() {
             startCsvExport()
         } else {
             exportInProgress.set(false)
-            showStatus("Storage permission denied: cannot save CSV files")
+            showStatus("Storage permission denied: cannot save CSV files", StatusKind.ERROR)
         }
     }
 
@@ -142,6 +148,7 @@ class MainActivity : AppCompatActivity() {
 
         if (!healthConnectManager.isAvailable()) {
             txtPermissionStatus.text = "Health Connect is not available. Install or update Health Connect and reopen the app."
+            showStatus("Health Connect is not available", StatusKind.ERROR)
             btnGrantPermissions.isEnabled = false
             btnGrantHistory.isEnabled = false
             btnExportCsv.isEnabled = false
@@ -227,6 +234,8 @@ class MainActivity : AppCompatActivity() {
         txtStatus = findViewById(R.id.txtStatus)
         txtLastExport = findViewById(R.id.txtLastExport)
         progressBar = findViewById(R.id.progressBar)
+        txtProgress = findViewById(R.id.txtProgress)
+        defaultStatusColors = txtStatus.textColors
     }
 
     private fun setupCategoryExpansion() {
@@ -347,7 +356,7 @@ class MainActivity : AppCompatActivity() {
 
         btnExportCsv.setOnClickListener {
             if (!exportInProgress.compareAndSet(false, true)) {
-                showStatus("Export already in progress")
+                showStatus("Export already in progress", StatusKind.WARNING)
                 return@setOnClickListener
             }
             saveUiToPrefs()
@@ -392,7 +401,7 @@ class MainActivity : AppCompatActivity() {
         try {
             healthPermissionLauncher.launch(healthConnectManager.permissions)
         } catch (e: ActivityNotFoundException) {
-            showStatus("Cannot open Health Connect permissions: ${e.message}")
+            showStatus("Cannot open Health Connect permissions: ${e.message}", StatusKind.ERROR)
         }
     }
 
@@ -401,7 +410,7 @@ class MainActivity : AppCompatActivity() {
         try {
             healthPermissionLauncher.launch(setOf(HealthConnectManager.PERMISSION_READ_HEALTH_DATA_HISTORY))
         } catch (e: ActivityNotFoundException) {
-            showStatus("Cannot open Health Connect permissions: ${e.message}")
+            showStatus("Cannot open Health Connect permissions: ${e.message}", StatusKind.ERROR)
         }
     }
 
@@ -528,17 +537,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun exportToCsv() {
         showProgress(true)
-        showStatus("Reading Health Connect data… Keep the app open")
+        showStatus("Exporting… Keep the app open")
         // Health Connect refuses reads once the app is in the background.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         lifecycleScope.launch {
             try {
                 val config = buildConfigFromUi()
-                val result = healthConnectManager.readHealthDataByDay(config)
+                val result = healthConnectManager.readHealthDataByDay(config) { label, fraction ->
+                    runOnUiThread { updateProgress("Reading: $label", fraction * READ_SHARE) }
+                }
                 val dailyData = result.data
 
-                showStatus("Writing CSV files…")
+                updateProgress("Writing CSV files", READ_SHARE)
 
                 val splitMode = when (spinnerCsvSplit.selectedItemPosition) {
                     1 -> CsvExporter.SplitMode.BY_MONTH
@@ -559,23 +570,27 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
+                val kind = if (result.warnings.isEmpty()) StatusKind.SUCCESS else StatusKind.WARNING
                 if (res.files.isEmpty()) {
-                    showStatus("No data to export")
+                    showStatus("No data to export for the selected types and period", StatusKind.WARNING)
                 } else {
                     prefs.edit().putLong("last_export_manual", System.currentTimeMillis()).apply()
                     updateLastExportLabel()
                     val days = dailyData.keys
                     showStatus(
-                        "CSV exported: ${res.files.size} file(s) to Downloads, " +
-                                "${days.size} day(s) ${days.first()} … ${days.last()}"
+                        "Saved ${res.files.size} file(s) to ${res.location}:\n" +
+                                res.files.joinToString("\n") { "• ${it.first}" } +
+                                "\n\nData: ${days.size} day(s), ${days.first()} … ${days.last()}" +
+                                if (result.warnings.isEmpty()) "" else "\n\n${result.warnings.size} warning(s), see the report.",
+                        kind
                     )
                 }
 
-                if (result.warnings.isNotEmpty()) showWarningsDialog(result.warnings)
+                showReportDialog(result.summary, result.warnings)
             } catch (e: HealthConnectManager.ExportInterruptedException) {
-                showStatus(e.message ?: "Export interrupted")
+                showStatus(e.message ?: "Export interrupted", StatusKind.ERROR)
             } catch (e: Exception) {
-                showStatus("Error: ${e.message}")
+                showStatus("Export failed: ${e.message ?: e.javaClass.simpleName}", StatusKind.ERROR)
             } finally {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 showProgress(false)
@@ -585,10 +600,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showWarningsDialog(warnings: List<String>) {
+    private fun showReportDialog(summary: List<String>, warnings: List<String>) {
+        val text = buildString {
+            if (warnings.isNotEmpty()) {
+                append("Warnings:\n")
+                append(warnings.joinToString("\n\n") { "• $it" })
+                append("\n\n")
+            }
+            append("Received from Health Connect:\n")
+            append(summary.joinToString("\n"))
+        }
         AlertDialog.Builder(this)
-            .setTitle("Export finished with warnings")
-            .setMessage(warnings.joinToString("\n\n") { "• $it" })
+            .setTitle(if (warnings.isEmpty()) "Export report" else "Export finished with warnings")
+            .setMessage(text)
             .setPositiveButton("OK", null)
             .show()
     }
@@ -608,10 +632,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun showProgress(show: Boolean) {
         progressBar.visibility = if (show) View.VISIBLE else View.GONE
+        txtProgress.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) updateProgress("Starting", 0f)
         btnExportCsv.isEnabled = !show
     }
 
-    private fun showStatus(message: String) {
+    private fun updateProgress(step: String, fraction: Float) {
+        val value = (fraction.coerceIn(0f, 1f) * progressBar.max).toInt()
+        progressBar.progress = value
+        txtProgress.text = "$step… ${value * 100 / progressBar.max}%"
+    }
+
+    private fun showStatus(message: String, kind: StatusKind = StatusKind.INFO) {
         txtStatus.text = "Status: $message"
+        when (kind) {
+            StatusKind.INFO -> defaultStatusColors?.let { txtStatus.setTextColor(it) }
+            StatusKind.SUCCESS -> txtStatus.setTextColor(COLOR_SUCCESS)
+            StatusKind.WARNING -> txtStatus.setTextColor(COLOR_WARNING)
+            StatusKind.ERROR -> txtStatus.setTextColor(COLOR_ERROR)
+        }
+    }
+
+    private companion object {
+        // Share of the progress bar used by reading; the rest is writing CSV files.
+        const val READ_SHARE = 0.95f
+
+        val COLOR_SUCCESS = Color.parseColor("#388E3C")
+        val COLOR_WARNING = Color.parseColor("#F57C00")
+        val COLOR_ERROR = Color.parseColor("#D32F2F")
     }
 }
