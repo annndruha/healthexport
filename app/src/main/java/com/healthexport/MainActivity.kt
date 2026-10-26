@@ -1,39 +1,29 @@
 package com.healthexport
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.TimePickerDialog
-import android.content.Context
-import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.text.Spanned
 import android.view.View
+import android.view.WindowManager
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.text.HtmlCompat
+import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
-import androidx.work.*
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.Scope
 import com.google.android.material.switchmaterial.SwitchMaterial
-import com.google.android.material.textfield.TextInputEditText
-import com.google.api.services.sheets.v4.SheetsScopes
-import com.healthexport.models.DailyHealthData
 import com.healthexport.models.ExportConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
@@ -97,79 +87,43 @@ class MainActivity : AppCompatActivity() {
     private lateinit var layoutSleepSubtypes: LinearLayout
     private lateinit var layoutVitalsSubtypes: LinearLayout
 
+    // Health Connect access
+    private lateinit var txtPermissionStatus: TextView
+    private lateinit var btnGrantPermissions: Button
+    private lateinit var btnGrantHistory: Button
+    private lateinit var txtHistoryHint: TextView
+
     // Other UI
     private lateinit var spinnerDateRange: Spinner
-    private lateinit var spinnerFrequency: Spinner
     private lateinit var spinnerCsvSplit: Spinner
-    private lateinit var switchAutoExport: SwitchMaterial
     private lateinit var switchSaferExport: SwitchMaterial
 
-    // Daily Manual Export UI
-    private lateinit var switchManualExportReminder: SwitchMaterial
-    private lateinit var layoutManualExportControls: LinearLayout
-    private lateinit var txtReminderTime: TextView
-    private lateinit var btnPickReminderTime: Button
-    private lateinit var btnExportAll3Days: Button
-
-    private lateinit var editSheetId: TextInputEditText
-    private lateinit var btnConnectGoogle: Button
-    private lateinit var btnExport: Button
     private lateinit var btnExportCsv: Button
-    private lateinit var btnCsvGuide: Button
     private lateinit var txtStatus: TextView
     private lateinit var txtLastExport: TextView
     private lateinit var progressBar: ProgressBar
 
     private lateinit var healthConnectManager: HealthConnectManager
-    private lateinit var sheetsManager: SheetsManager
 
-    private var googleAccount: GoogleSignInAccount? = null
     private val prefs by lazy { getSharedPreferences("health_export_prefs", MODE_PRIVATE) }
 
     private val exportInProgress = AtomicBoolean(false)
 
-    // Cache
-    private var cachedKey: String? = null
-    private var cachedAtMs: Long = 0L
-    private var cachedDailyData: Map<String, DailyHealthData>? = null
-    private val cacheTtlMs: Long = 5 * 60 * 1000L
-
     private val allTimePosition = 4
     private fun isAllTimeSelected(): Boolean = spinnerDateRange.selectedItemPosition == allTimePosition
 
-    // Notification channels
-    private val reminderChannelId = "health_export_reminder"
-    private val autoExportChannelId = "health_export_autorun"
-
     private val healthPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions.values.all { it }) showStatus("Health permissions granted")
-        else showStatus("Some Health Connect permissions were denied")
-    }
+        PermissionController.createRequestPermissionResultContract()
+    ) { refreshPermissionStatus() }
 
-    private val postNotificationsLauncher = registerForActivityResult(
+    private val storagePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (!granted) showStatus("Notification permission denied (daily reminders may not show)")
-    }
-
-    private val googleSignInLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-        try {
-            googleAccount = task.result
-            googleAccount?.let { account ->
-                val email = account.email ?: return@let
-                sheetsManager.initializeCredential(email)
-                prefs.edit().putString("account_name", email).apply()
-                btnExport.isEnabled = true
-                btnConnectGoogle.text = "Connected: $email"
-                showStatus("Google connected")
-            }
-        } catch (e: Exception) {
-            showStatus("Google sign-in failed: ${e.message}")
+        if (granted) {
+            startCsvExport()
+        } else {
+            exportInProgress.set(false)
+            showStatus("Storage permission denied: cannot save CSV files")
         }
     }
 
@@ -178,18 +132,29 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         healthConnectManager = HealthConnectManager(this)
-        sheetsManager = SheetsManager(this)
 
         bindViews()
         setupCategoryExpansion()
 
-        createReminderNotificationChannel()
-        createAutoExportNotificationChannel()
-
         loadPrefsIntoUi()
         applyAsterisks()
         setupListeners()
-        requestHealthPermissions()
+
+        if (!healthConnectManager.isAvailable()) {
+            txtPermissionStatus.text = "Health Connect is not available. Install or update Health Connect and reopen the app."
+            btnGrantPermissions.isEnabled = false
+            btnGrantHistory.isEnabled = false
+            btnExportCsv.isEnabled = false
+            return
+        }
+
+        refreshPermissionStatus(requestIfNoneGranted = true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Permissions may have changed in Health Connect settings.
+        if (healthConnectManager.isAvailable()) refreshPermissionStatus()
     }
 
     override fun onPause() {
@@ -249,24 +214,16 @@ class MainActivity : AppCompatActivity() {
         layoutSleepSubtypes = findViewById(R.id.layoutSleepSubtypes)
         layoutVitalsSubtypes = findViewById(R.id.layoutVitalsSubtypes)
 
+        txtPermissionStatus = findViewById(R.id.txtPermissionStatus)
+        btnGrantPermissions = findViewById(R.id.btnGrantPermissions)
+        btnGrantHistory = findViewById(R.id.btnGrantHistory)
+        txtHistoryHint = findViewById(R.id.txtHistoryHint)
+
         spinnerDateRange = findViewById(R.id.spinnerDateRange)
         spinnerCsvSplit = findViewById(R.id.spinnerCsvSplit)
-        spinnerFrequency = findViewById(R.id.spinnerFrequency)
-
-        switchAutoExport = findViewById(R.id.switchAutoExport)
         switchSaferExport = findViewById(R.id.switchSaferExport)
 
-        switchManualExportReminder = findViewById(R.id.switchManualExportReminder)
-        layoutManualExportControls = findViewById(R.id.layoutManualExportControls)
-        txtReminderTime = findViewById(R.id.txtReminderTime)
-        btnPickReminderTime = findViewById(R.id.btnPickReminderTime)
-        btnExportAll3Days = findViewById(R.id.btnExportAll3Days)
-
-        editSheetId = findViewById(R.id.editSheetId)
-        btnConnectGoogle = findViewById(R.id.btnConnectGoogle)
-        btnExport = findViewById(R.id.btnExport)
         btnExportCsv = findViewById(R.id.btnExportCsv)
-        btnCsvGuide = findViewById(R.id.btnCsvGuide)
         txtStatus = findViewById(R.id.txtStatus)
         txtLastExport = findViewById(R.id.txtLastExport)
         progressBar = findViewById(R.id.progressBar)
@@ -293,79 +250,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun createReminderNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val channel = NotificationChannel(
-                reminderChannelId,
-                "Export reminders",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Daily reminder to manually export Health Connect data"
-                enableVibration(true)
-            }
-            nm.createNotificationChannel(channel)
-        }
-    }
-
-    private fun createAutoExportNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val channel = NotificationChannel(
-                autoExportChannelId,
-                "Auto export",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Notification shown while auto export is running"
-                setShowBadge(false)
-            }
-            nm.createNotificationChannel(channel)
-        }
-    }
-
-    private fun ensurePostNotificationsPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < 33) return
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-        if (!granted) postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
-    private fun updateLastExportLabels() {
+    private fun updateLastExportLabel() {
         val df = SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault())
-
-        val manual = prefs.getLong("last_export_manual", 0L)
-        val auto = prefs.getLong("last_export_auto", 0L)
-
-        val manualText = if (manual > 0L) df.format(Date(manual)) else "Never"
-        val autoText = if (auto > 0L) df.format(Date(auto)) else "Never"
-
-        txtLastExport.text = "Last manual export: $manualText\nLast auto export: $autoText"
+        val last = prefs.getLong("last_export_manual", 0L)
+        txtLastExport.text = "Last export: " + if (last > 0L) df.format(Date(last)) else "Never"
     }
 
     private fun loadPrefsIntoUi() {
-        editSheetId.setText(prefs.getString("spreadsheet_id", ""))
-
-        val savedAccount = prefs.getString("account_name", null)
-        if (!savedAccount.isNullOrBlank()) {
-            btnConnectGoogle.text = "Connected: $savedAccount"
-            btnExport.isEnabled = true
-            sheetsManager.initializeCredential(savedAccount)
-        }
-
-        updateLastExportLabels()
+        updateLastExportLabel()
 
         val saferEnabled = prefs.getBoolean("safer_export_enabled", false)
         switchSaferExport.isChecked = saferEnabled
         healthConnectManager.setSaferExportMode(saferEnabled)
-
-        val autoEnabled = prefs.getBoolean("auto_export_enabled", false)
-        switchAutoExport.isChecked = autoEnabled
-        spinnerFrequency.isEnabled = autoEnabled
-
-        val enabledDailyManual = prefs.getBoolean("manual_reminder_enabled", false)
-        switchManualExportReminder.isChecked = enabledDailyManual
-        layoutManualExportControls.visibility = if (enabledDailyManual) View.VISIBLE else View.GONE
-        updateReminderTimeLabel()
 
         // Categories
         checkCategoryActivity.isChecked = prefs.getBoolean("cat_activity", true)
@@ -408,10 +304,10 @@ class MainActivity : AppCompatActivity() {
         // Sleep
         checkSleepSession.isChecked = prefs.getBoolean("includeSleepSession", true)
 
-        // Vitals defaults: BG/BP/Temp OFF
-        checkBloodGlucose.isChecked = prefs.getBoolean("includeBloodGlucose", false)
-        checkBloodPressure.isChecked = prefs.getBoolean("includeBloodPressure", false)
-        checkBodyTemperature.isChecked = prefs.getBoolean("includeBodyTemperature", false)
+        // Vitals
+        checkBloodGlucose.isChecked = prefs.getBoolean("includeBloodGlucose", true)
+        checkBloodPressure.isChecked = prefs.getBoolean("includeBloodPressure", true)
+        checkBodyTemperature.isChecked = prefs.getBoolean("includeBodyTemperature", true)
 
         // High volume defaults off
         checkHeartRate.isChecked = prefs.getBoolean("includeHeartRate", false)
@@ -419,7 +315,6 @@ class MainActivity : AppCompatActivity() {
         checkOxygenSaturation.isChecked = prefs.getBoolean("includeOxygenSaturation", false)
         checkRespiratoryRate.isChecked = prefs.getBoolean("includeRespiratoryRate", false)
 
-        // Resting HR default on
         checkRestingHeartRate.isChecked = prefs.getBoolean("includeRestingHeartRate", true)
 
         // Expand/collapse to match saved category state
@@ -431,28 +326,9 @@ class MainActivity : AppCompatActivity() {
         layoutVitalsSubtypes.visibility = if (checkCategoryVitals.isChecked) View.VISIBLE else View.GONE
     }
 
-    private fun updateReminderTimeLabel() {
-        val h = prefs.getInt("manual_reminder_hour", -1)
-        val m = prefs.getInt("manual_reminder_minute", -1)
-        if (h < 0 || m < 0) {
-            txtReminderTime.text = "Time: Not set"
-            return
-        }
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, h)
-            set(Calendar.MINUTE, m)
-        }
-        val label = SimpleDateFormat("h:mm a", Locale.getDefault()).format(cal.time)
-        txtReminderTime.text = "Time: $label"
-    }
-
     private fun applyAsterisks() {
         fun hv(label: String): Spanned =
             HtmlCompat.fromHtml("$label <font color='#D32F2F'>*</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
-
-        checkBloodGlucose.text = hv("Blood glucose")
-        checkBloodPressure.text = hv("Blood pressure")
-        checkBodyTemperature.text = hv("Body temperature")
 
         checkHeartRate.text = hv("Heart rate (min/max/avg)")
         checkHeartRateVariability.text = hv("Heart rate variability (min/max/avg)")
@@ -461,78 +337,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        btnConnectGoogle.setOnClickListener { signInWithGoogle() }
-        btnCsvGuide.setOnClickListener { startActivity(Intent(this, CsvGuidanceActivity::class.java)) }
+        btnGrantPermissions.setOnClickListener { requestHealthPermissions() }
+        btnGrantHistory.setOnClickListener { requestHistoryPermission() }
 
         switchSaferExport.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean("safer_export_enabled", enabled).apply()
             healthConnectManager.setSaferExportMode(enabled)
-        }
-
-        // Toggle daily manual export section
-        switchManualExportReminder.setOnCheckedChangeListener { _, enabled ->
-            prefs.edit().putBoolean("manual_reminder_enabled", enabled).apply()
-            layoutManualExportControls.visibility = if (enabled) View.VISIBLE else View.GONE
-
-            if (enabled) {
-                ensurePostNotificationsPermissionIfNeeded()
-
-                val hour = prefs.getInt("manual_reminder_hour", -1)
-                val min = prefs.getInt("manual_reminder_minute", -1)
-                if (hour < 0 || min < 0) {
-                    showStatus("Pick a reminder time")
-                } else {
-                    scheduleManualReminder()
-                    showStatus("Daily reminder scheduled")
-                }
-            } else {
-                cancelManualReminder()
-                showStatus("Daily reminder disabled")
-            }
-        }
-
-        btnPickReminderTime.setOnClickListener {
-            val now = Calendar.getInstance()
-            val initialH = prefs.getInt("manual_reminder_hour", now.get(Calendar.HOUR_OF_DAY))
-            val initialM = prefs.getInt("manual_reminder_minute", now.get(Calendar.MINUTE))
-
-            TimePickerDialog(
-                this,
-                { _, hourOfDay, minute ->
-                    prefs.edit()
-                        .putInt("manual_reminder_hour", hourOfDay)
-                        .putInt("manual_reminder_minute", minute)
-                        .apply()
-                    updateReminderTimeLabel()
-
-                    if (switchManualExportReminder.isChecked) {
-                        ensurePostNotificationsPermissionIfNeeded()
-                        scheduleManualReminder()
-                    }
-                },
-                initialH,
-                initialM,
-                false // 12-hour (AM/PM)
-            ).show()
-        }
-
-        btnExportAll3Days.setOnClickListener {
-            if (!exportInProgress.compareAndSet(false, true)) {
-                showStatus("Export already in progress")
-                return@setOnClickListener
-            }
-            saveUiToPrefs()
-            exportAllDataLast3DaysToSheets { exportInProgress.set(false) }
-        }
-
-        btnExport.setOnClickListener {
-            if (!exportInProgress.compareAndSet(false, true)) {
-                showStatus("Export already in progress")
-                return@setOnClickListener
-            }
-            saveUiToPrefs()
-            val run = { exportToSheets { exportInProgress.set(false) } }
-            if (isAllTimeSelected()) showAllTimeWarningDialog { run() } else run()
         }
 
         btnExportCsv.setOnClickListener {
@@ -541,45 +351,71 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             saveUiToPrefs()
-            val run = { exportToCsv { exportInProgress.set(false) } }
-            if (isAllTimeSelected()) showAllTimeWarningDialog { run() } else run()
-        }
-
-        switchAutoExport.setOnCheckedChangeListener { _, enabled ->
-            prefs.edit().putBoolean("auto_export_enabled", enabled).apply()
-            spinnerFrequency.isEnabled = enabled
-            saveUiToPrefs()
-            if (enabled) scheduleAutoExport() else cancelAutoExport()
-        }
-
-        spinnerFrequency.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                if (!switchAutoExport.isChecked) return
-                scheduleAutoExport()
+            if (needsStoragePermission()) {
+                storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            } else {
+                startCsvExport()
             }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    // -------------------------
+    // Permissions
+    // -------------------------
+
+    private fun refreshPermissionStatus(requestIfNoneGranted: Boolean = false) {
+        lifecycleScope.launch {
+            val granted = try {
+                healthConnectManager.getGrantedPermissions()
+            } catch (e: Exception) {
+                txtPermissionStatus.text = "Could not check Health Connect permissions: ${e.message}"
+                return@launch
+            }
+
+            val total = healthConnectManager.permissions.size
+            val grantedCount = healthConnectManager.permissions.count { it in granted }
+            val history = HealthConnectManager.PERMISSION_READ_HEALTH_DATA_HISTORY in granted
+
+            txtPermissionStatus.text =
+                "Data types allowed: $grantedCount of $total\n" +
+                        "Data older than 30 days: " + if (history) "allowed" else "not allowed"
+
+            btnGrantPermissions.visibility = if (grantedCount < total) View.VISIBLE else View.GONE
+            btnGrantHistory.visibility = if (history) View.GONE else View.VISIBLE
+            txtHistoryHint.visibility = if (history) View.GONE else View.VISIBLE
+
+            if (requestIfNoneGranted && grantedCount == 0) requestHealthPermissions()
         }
     }
 
     private fun requestHealthPermissions() {
-        healthPermissionLauncher.launch(
-            healthConnectManager.permissions.map { it.toString() }.toTypedArray()
-        )
+        try {
+            healthPermissionLauncher.launch(healthConnectManager.permissions)
+        } catch (e: ActivityNotFoundException) {
+            showStatus("Cannot open Health Connect permissions: ${e.message}")
+        }
     }
 
-    private fun signInWithGoogle() {
-        val signInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail()
-            .requestScopes(Scope(SheetsScopes.SPREADSHEETS))
-            .build()
-
-        val client = GoogleSignIn.getClient(this, signInOptions)
-        googleSignInLauncher.launch(client.signInIntent)
+    // Requested on its own so an older Health Connect that doesn't know it can't break the main request.
+    private fun requestHistoryPermission() {
+        try {
+            healthPermissionLauncher.launch(setOf(HealthConnectManager.PERMISSION_READ_HEALTH_DATA_HISTORY))
+        } catch (e: ActivityNotFoundException) {
+            showStatus("Cannot open Health Connect permissions: ${e.message}")
+        }
     }
+
+    private fun needsStoragePermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+
+    // -------------------------
+    // Export
+    // -------------------------
 
     private fun saveUiToPrefs() {
         val e = prefs.edit()
-        e.putString("spreadsheet_id", editSheetId.text?.toString()?.trim() ?: "")
 
         e.putBoolean("cat_activity", checkCategoryActivity.isChecked)
         e.putBoolean("cat_body", checkCategoryBodyMeasurements.isChecked)
@@ -629,43 +465,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildConfigFromUi(): ExportConfig {
+        // A collapsed (unchecked) category exports nothing, whatever its sub-checkboxes say.
+        val act = checkCategoryActivity.isChecked
+        val body = checkCategoryBodyMeasurements.isChecked
+        val cycle = checkCategoryCycleTracking.isChecked
+        val nutr = checkCategoryNutrition.isChecked
+        val sleep = checkCategorySleep.isChecked
+        val vit = checkCategoryVitals.isChecked
+
         return ExportConfig(
-            includeActiveCalories = checkActiveCalories.isChecked,
-            includeDistance = checkDistance.isChecked,
-            includeElevationGained = checkElevationGained.isChecked,
-            includeExercise = checkExercise.isChecked,
-            includeFloorsClimbed = checkFloorsClimbed.isChecked,
-            includePower = checkPower.isChecked,
-            includeSpeed = checkSpeed.isChecked,
-            includeSteps = checkSteps.isChecked,
-            includeTotalCalories = checkTotalCalories.isChecked,
-            includeVO2Max = checkVO2Max.isChecked,
-            includeWheelchairPushes = checkWheelchairPushes.isChecked,
+            includeActiveCalories = act && checkActiveCalories.isChecked,
+            includeDistance = act && checkDistance.isChecked,
+            includeElevationGained = act && checkElevationGained.isChecked,
+            includeExercise = act && checkExercise.isChecked,
+            includeFloorsClimbed = act && checkFloorsClimbed.isChecked,
+            includePower = act && checkPower.isChecked,
+            includeSpeed = act && checkSpeed.isChecked,
+            includeSteps = act && checkSteps.isChecked,
+            includeTotalCalories = act && checkTotalCalories.isChecked,
+            includeVO2Max = act && checkVO2Max.isChecked,
+            includeWheelchairPushes = act && checkWheelchairPushes.isChecked,
 
-            includeBodyFat = checkBodyFat.isChecked,
-            includeBoneMass = checkBoneMass.isChecked,
-            includeHeight = checkHeight.isChecked,
-            includeLeanBodyMass = checkLeanBodyMass.isChecked,
-            includeWeight = checkWeight.isChecked,
+            includeBodyFat = body && checkBodyFat.isChecked,
+            includeBoneMass = body && checkBoneMass.isChecked,
+            includeHeight = body && checkHeight.isChecked,
+            includeLeanBodyMass = body && checkLeanBodyMass.isChecked,
+            includeWeight = body && checkWeight.isChecked,
 
-            includeCervicalMucus = checkCervicalMucus.isChecked,
-            includeMenstruation = checkMenstruation.isChecked,
-            includeOvulationTest = checkOvulationTest.isChecked,
-            includeSexualActivity = checkSexualActivity.isChecked,
+            includeCervicalMucus = cycle && checkCervicalMucus.isChecked,
+            includeMenstruation = cycle && checkMenstruation.isChecked,
+            includeOvulationTest = cycle && checkOvulationTest.isChecked,
+            includeSexualActivity = cycle && checkSexualActivity.isChecked,
 
-            includeHydration = checkHydration.isChecked,
-            includeNutrition = checkNutrition.isChecked,
+            includeHydration = nutr && checkHydration.isChecked,
+            includeNutrition = nutr && checkNutrition.isChecked,
 
-            includeSleepSession = checkSleepSession.isChecked,
+            includeSleepSession = sleep && checkSleepSession.isChecked,
 
-            includeBloodGlucose = checkBloodGlucose.isChecked,
-            includeBloodPressure = checkBloodPressure.isChecked,
-            includeBodyTemperature = checkBodyTemperature.isChecked,
-            includeHeartRate = checkHeartRate.isChecked,
-            includeHeartRateVariability = checkHeartRateVariability.isChecked,
-            includeOxygenSaturation = checkOxygenSaturation.isChecked,
-            includeRespiratoryRate = checkRespiratoryRate.isChecked,
-            includeRestingHeartRate = checkRestingHeartRate.isChecked,
+            includeBloodGlucose = vit && checkBloodGlucose.isChecked,
+            includeBloodPressure = vit && checkBloodPressure.isChecked,
+            includeBodyTemperature = vit && checkBodyTemperature.isChecked,
+            includeHeartRate = vit && checkHeartRate.isChecked,
+            includeHeartRateVariability = vit && checkHeartRateVariability.isChecked,
+            includeOxygenSaturation = vit && checkOxygenSaturation.isChecked,
+            includeRespiratoryRate = vit && checkRespiratoryRate.isChecked,
+            includeRestingHeartRate = vit && checkRestingHeartRate.isChecked,
 
             daysBack = when (spinnerDateRange.selectedItemPosition) {
                 0 -> 7
@@ -678,142 +522,23 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun cacheKeyFor(config: ExportConfig): String =
-        "daysBack=${config.daysBack}|safer=${switchSaferExport.isChecked}"
-
-    private suspend fun getDailyDataWithCache(config: ExportConfig): Map<String, DailyHealthData> {
-        val now = System.currentTimeMillis()
-        val key = cacheKeyFor(config)
-        val hit = (cachedKey == key) && (cachedDailyData != null) && (now - cachedAtMs <= cacheTtlMs)
-        if (hit) return cachedDailyData!!
-
-        val data = healthConnectManager.readHealthDataByDay(config)
-        cachedKey = key
-        cachedAtMs = now
-        cachedDailyData = data
-        return data
+    private fun startCsvExport() {
+        if (isAllTimeSelected()) showAllTimeWarningDialog { exportToCsv() } else exportToCsv()
     }
 
-    private fun exportToSheets(onFinished: () -> Unit) {
-        val sheetId = editSheetId.text?.toString()?.trim().orEmpty()
-        if (sheetId.isBlank()) {
-            showStatus("Please enter a Google Sheet ID")
-            onFinished()
-            return
-        }
-
+    private fun exportToCsv() {
         showProgress(true)
-        showStatus("Exporting to Google Sheets...")
+        showStatus("Reading Health Connect data… Keep the app open")
+        // Health Connect refuses reads once the app is in the background.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         lifecycleScope.launch {
             try {
                 val config = buildConfigFromUi()
-                val dailyData = getDailyDataWithCache(config)
-                val result = sheetsManager.exportToSheets(sheetId, dailyData)
+                val result = healthConnectManager.readHealthDataByDay(config)
+                val dailyData = result.data
 
-                showProgress(false)
-                if (result.isSuccess) {
-                    val now = System.currentTimeMillis()
-                    prefs.edit().putLong("last_export_manual", now).apply()
-                    updateLastExportLabels()
-                    showStatus(result.getOrNull() ?: "Export complete")
-                } else {
-                    showStatus("Export failed: ${result.exceptionOrNull()?.message ?: "Unknown error"}")
-                }
-            } catch (e: Exception) {
-                showProgress(false)
-                showStatus("Error: ${e.message}")
-            } finally {
-                exportInProgress.set(false)
-                onFinished()
-            }
-        }
-    }
-
-    private fun exportAllDataLast3DaysToSheets(onFinished: () -> Unit) {
-        val sheetId = editSheetId.text?.toString()?.trim().orEmpty()
-        if (sheetId.isBlank()) {
-            showStatus("Please enter a Google Sheet ID")
-            onFinished()
-            return
-        }
-
-        showProgress(true)
-        showStatus("Exporting ALL data (last 3 days)... Keep screen on")
-
-        lifecycleScope.launch {
-            try {
-                val config = ExportConfig(
-                    includeActiveCalories = true,
-                    includeDistance = true,
-                    includeElevationGained = true,
-                    includeExercise = true,
-                    includeFloorsClimbed = true,
-                    includePower = true,
-                    includeSpeed = true,
-                    includeSteps = true,
-                    includeTotalCalories = true,
-                    includeVO2Max = true,
-                    includeWheelchairPushes = true,
-
-                    includeBodyFat = true,
-                    includeBoneMass = true,
-                    includeHeight = true,
-                    includeLeanBodyMass = true,
-                    includeWeight = true,
-
-                    includeCervicalMucus = true,
-                    includeMenstruation = true,
-                    includeOvulationTest = true,
-                    includeSexualActivity = true,
-
-                    includeHydration = true,
-                    includeNutrition = true,
-
-                    includeSleepSession = true,
-
-                    includeBloodGlucose = true,
-                    includeBloodPressure = true,
-                    includeBodyTemperature = true,
-                    includeHeartRate = true,
-                    includeHeartRateVariability = true,
-                    includeOxygenSaturation = true,
-                    includeRespiratoryRate = true,
-                    includeRestingHeartRate = true,
-
-                    daysBack = 3
-                )
-
-                val dailyData = healthConnectManager.readHealthDataByDay(config)
-                val result = sheetsManager.exportToSheets(sheetId, dailyData)
-
-                showProgress(false)
-                if (result.isSuccess) {
-                    val now = System.currentTimeMillis()
-                    prefs.edit().putLong("last_export_manual", now).apply()
-                    updateLastExportLabels()
-                    showStatus(result.getOrNull() ?: "Export complete")
-                } else {
-                    showStatus("Export failed: ${result.exceptionOrNull()?.message ?: "Unknown error"}")
-                }
-            } catch (e: Exception) {
-                showProgress(false)
-                showStatus("Error: ${e.message}")
-            } finally {
-                exportInProgress.set(false)
-                onFinished()
-            }
-        }
-    }
-
-    private fun exportToCsv(onFinished: () -> Unit) {
-        showProgress(true)
-        showStatus("Exporting CSV to Downloads...")
-
-        lifecycleScope.launch {
-            try {
-                val config = buildConfigFromUi()
-                val dailyData = getDailyDataWithCache(config)
+                showStatus("Writing CSV files…")
 
                 val splitMode = when (spinnerCsvSplit.selectedItemPosition) {
                     1 -> CsvExporter.SplitMode.BY_MONTH
@@ -821,118 +546,69 @@ class MainActivity : AppCompatActivity() {
                     else -> CsvExporter.SplitMode.NONE
                 }
 
-                val exporter = CsvExporter(this@MainActivity)
-                val res = exporter.exportSelectedToDownloads(
-                    dailyData = dailyData,
-                    splitMode = if (isAllTimeSelected()) splitMode else CsvExporter.SplitMode.NONE,
-                    includeActivity = dailyData.values.any { it.activityData.isNotEmpty() },
-                    includeBody = dailyData.values.any { it.bodyMeasurementData.isNotEmpty() },
-                    includeSleep = dailyData.values.any { it.sleepData.isNotEmpty() },
-                    includeVitals = dailyData.values.any { it.vitalsData.isNotEmpty() },
-                    includeNutrition = dailyData.values.any { it.nutritionData.isNotEmpty() },
-                    includeCycle = dailyData.values.any { it.cycleTrackingData.isNotEmpty() }
-                )
-
-                showProgress(false)
-                if (res.files.isEmpty()) showStatus("No data to export")
-                else {
-                    val now = System.currentTimeMillis()
-                    prefs.edit().putLong("last_export_manual", now).apply()
-                    updateLastExportLabels()
-                    showStatus("CSV exported: ${res.files.size} file(s) to Downloads")
+                val res = withContext(Dispatchers.IO) {
+                    CsvExporter(this@MainActivity).exportSelectedToDownloads(
+                        dailyData = dailyData,
+                        splitMode = if (isAllTimeSelected()) splitMode else CsvExporter.SplitMode.NONE,
+                        includeActivity = dailyData.values.any { it.activityData.isNotEmpty() },
+                        includeBody = dailyData.values.any { it.bodyMeasurementData.isNotEmpty() },
+                        includeSleep = dailyData.values.any { it.sleepData.isNotEmpty() },
+                        includeVitals = dailyData.values.any { it.vitalsData.isNotEmpty() },
+                        includeNutrition = dailyData.values.any { it.nutritionData.isNotEmpty() },
+                        includeCycle = dailyData.values.any { it.cycleTrackingData.isNotEmpty() }
+                    )
                 }
+
+                if (res.files.isEmpty()) {
+                    showStatus("No data to export")
+                } else {
+                    prefs.edit().putLong("last_export_manual", System.currentTimeMillis()).apply()
+                    updateLastExportLabel()
+                    val days = dailyData.keys
+                    showStatus(
+                        "CSV exported: ${res.files.size} file(s) to Downloads, " +
+                                "${days.size} day(s) ${days.first()} … ${days.last()}"
+                    )
+                }
+
+                if (result.warnings.isNotEmpty()) showWarningsDialog(result.warnings)
+            } catch (e: HealthConnectManager.ExportInterruptedException) {
+                showStatus(e.message ?: "Export interrupted")
             } catch (e: Exception) {
-                showProgress(false)
                 showStatus("Error: ${e.message}")
             } finally {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                showProgress(false)
                 exportInProgress.set(false)
-                onFinished()
+                refreshPermissionStatus()
             }
         }
+    }
+
+    private fun showWarningsDialog(warnings: List<String>) {
+        AlertDialog.Builder(this)
+            .setTitle("Export finished with warnings")
+            .setMessage(warnings.joinToString("\n\n") { "• $it" })
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     private fun showAllTimeWarningDialog(onContinue: () -> Unit) {
         AlertDialog.Builder(this)
             .setTitle("All time export")
             .setMessage(
-                "Exporting all time data can take a long time and use more battery/data. " +
-                        "It may also hit Google Sheets limits.\n\nContinue?"
+                "Exporting all time data can take a long time.\n\n" +
+                        "Keep the app open and the screen on until it finishes.\n\nContinue?"
             )
             .setPositiveButton("Continue") { _, _ -> onContinue() }
             .setNegativeButton("Cancel") { _, _ -> exportInProgress.set(false) }
+            .setOnCancelListener { exportInProgress.set(false) }
             .show()
-    }
-
-    private fun scheduleAutoExport() {
-        val (interval, unit) = when (spinnerFrequency.selectedItemPosition) {
-            0 -> 15L to TimeUnit.MINUTES
-            1 -> 30L to TimeUnit.MINUTES
-            2 -> 1L to TimeUnit.HOURS
-            3 -> 4L to TimeUnit.HOURS
-            4 -> 8L to TimeUnit.HOURS
-            5 -> 12L to TimeUnit.HOURS
-            6 -> 24L to TimeUnit.HOURS
-            else -> 1L to TimeUnit.HOURS
-        }
-
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val workRequest = PeriodicWorkRequestBuilder<ExportWorker>(interval, unit)
-            .setConstraints(constraints)
-            .build()
-
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "health_export_work",
-            ExistingPeriodicWorkPolicy.REPLACE,
-            workRequest
-        )
-
-        showStatus("Auto-export scheduled: ${spinnerFrequency.selectedItem}")
-    }
-
-    private fun cancelAutoExport() {
-        WorkManager.getInstance(this).cancelUniqueWork("health_export_work")
-        showStatus("Auto-export cancelled")
-    }
-
-    private fun scheduleManualReminder() {
-        val hour = prefs.getInt("manual_reminder_hour", -1)
-        val minute = prefs.getInt("manual_reminder_minute", -1)
-        if (hour < 0 || minute < 0) return
-
-        val now = Calendar.getInstance()
-        val next = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (before(now)) add(Calendar.DAY_OF_YEAR, 1)
-        }
-
-        val delayMs = next.timeInMillis - now.timeInMillis
-
-        val req = OneTimeWorkRequestBuilder<ManualExportReminderWorker>()
-            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
-            .build()
-
-        WorkManager.getInstance(this).enqueueUniqueWork(
-            "manual_export_reminder",
-            ExistingWorkPolicy.REPLACE,
-            req
-        )
-    }
-
-    private fun cancelManualReminder() {
-        WorkManager.getInstance(this).cancelUniqueWork("manual_export_reminder")
     }
 
     private fun showProgress(show: Boolean) {
         progressBar.visibility = if (show) View.VISIBLE else View.GONE
-        btnExport.isEnabled = !show
         btnExportCsv.isEnabled = !show
-        btnExportAll3Days.isEnabled = !show
     }
 
     private fun showStatus(message: String) {
