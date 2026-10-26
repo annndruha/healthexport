@@ -9,17 +9,6 @@
         <item>All time</item>
     </string-array>
 
-    <!-- Removed the 2-minute testing option -->
-    <string-array name="export_frequencies">
-        <item>Every 15 minutes</item>
-        <item>Every 30 minutes</item>
-        <item>Every 1 hour</item>
-        <item>Every 4 hours</item>
-        <item>Every 8 hours</item>
-        <item>Every 12 hours</item>
-        <item>Every 24 hours</item>
-    </string-array>
-
     <string-array name="csv_split_options">
         <item>No split</item>
         <item>Split by month</item>

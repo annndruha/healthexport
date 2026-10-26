@@ -15,9 +15,60 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="24dp"
-            android:text="Health Connect to Sheets"
+            android:text="Health Connect to CSV"
             android:textSize="24sp"
             android:textStyle="bold" />
+
+        <!-- Health Connect access -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="4dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:text="Health Connect access"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/txtPermissionStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Checking permissions…" />
+
+                <Button
+                    android:id="@+id/btnGrantPermissions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Grant Health Connect permissions" />
+
+                <Button
+                    android:id="@+id/btnGrantHistory"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow access to data older than 30 days" />
+
+                <TextView
+                    android:id="@+id/txtHistoryHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Without this, Health Connect only returns data from 30 days before the app was first given access. If the button has no effect, update Health Connect (or Android) to a version that supports past data access."
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <!-- Activity Category -->
         <com.google.android.material.card.MaterialCardView
@@ -363,26 +414,25 @@
                     android:paddingEnd="24dp"
                     android:visibility="gone">
 
-                    <!-- Foreground-only items (*) -->
                     <CheckBox
                         android:id="@+id/checkBloodGlucose"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Blood glucose *" />
+                        android:text="Blood glucose" />
 
                     <CheckBox
                         android:id="@+id/checkBloodPressure"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Blood pressure *" />
+                        android:text="Blood pressure" />
 
                     <CheckBox
                         android:id="@+id/checkBodyTemperature"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Body temperature *" />
+                        android:text="Body temperature" />
 
-                    <!-- High-volume + foreground-only (*) -->
+                    <!-- High-volume (*) -->
                     <CheckBox
                         android:id="@+id/checkHeartRate"
                         android:layout_width="wrap_content"
@@ -418,7 +468,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="* High-volume or foreground-only data. May take much longer (especially All time). Auto Export does not export these items—manual export only, keep the screen on."
+                        android:text="* High-volume data. May take much longer (especially All time)."
                         android:textColor="#D32F2F"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -486,152 +536,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Auto Export Schedule -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:text="Auto Export Schedule"
-                    android:textStyle="bold" />
-
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/switchAutoExport"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:text="Enable Auto Export" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginBottom="4dp"
-                    android:text="Export Frequency"
-                    android:textSize="12sp" />
-
-                <Spinner
-                    android:id="@+id/spinnerFrequency"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:enabled="false"
-                    android:entries="@array/export_frequencies" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- Daily Manual Export -->
-        <com.google.android.material.card.MaterialCardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:id="@+id/txtDailyManualExportTitle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Daily Manual Export"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="8dp" />
-
-                <com.google.android.material.switchmaterial.SwitchMaterial
-                    android:id="@+id/switchManualExportReminder"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Enable daily export" />
-
-                <!-- Everything below is visibility-controlled by the switch -->
-                <LinearLayout
-                    android:id="@+id/layoutManualExportControls"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone"
-                    android:layout_marginTop="8dp">
-
-                    <TextView
-                        android:id="@+id/txtReminderTime"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Time: Not set"
-                        android:layout_marginTop="4dp" />
-
-                    <Button
-                        android:id="@+id/btnPickReminderTime"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Pick reminder time"
-                        android:layout_marginTop="8dp" />
-
-                    <Button
-                        android:id="@+id/btnExportAll3Days"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Export ALL data to Google Sheets"
-                        android:layout_marginTop="12dp" />
-
-                    <TextView
-                        android:id="@+id/txtExportAllHint"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Exports all items (including *) for the last 3 days. Keep the screen on."
-                        android:textSize="12sp"
-                        android:layout_marginTop="6dp" />
-                </LinearLayout>
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- Sheet ID -->
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:hint="Google Sheet ID">
-
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/editSheetId"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="text" />
-
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <Button
-            android:id="@+id/btnConnectGoogle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:text="Connect Google Account" />
-
-        <Button
-            android:id="@+id/btnExport"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:enabled="false"
-            android:text="Export to Google Sheets" />
-
         <Button
             android:id="@+id/btnExportCsv"
             android:layout_width="match_parent"
@@ -639,12 +543,12 @@
             android:layout_marginBottom="8dp"
             android:text="Export CSV to Downloads" />
 
-        <Button
-            android:id="@+id/btnCsvGuide"
-            android:layout_width="match_parent"
+        <TextView
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:text="Bulk import to Sheets (Guide)" />
+            android:text="Keep the app open while exporting: Health Connect does not allow reading data in the background."
+            android:textAlignment="center"
+            android:textSize="12sp" />
 
         <TextView
             android:id="@+id/txtStatus"
@@ -659,7 +563,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Last manual export: Never&#10;Last auto export: Never"
+            android:text="Last export: Never"
             android:textAlignment="center"
             android:textSize="12sp" />
 

@@ -4,10 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import com.healthexport.models.BodyMeasurementData
 import com.healthexport.models.DailyHealthData
 import com.healthexport.models.ExerciseData
+import java.io.File
+import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
@@ -79,53 +82,54 @@ class CsvExporter(private val context: Context) {
         return "\"" + s.replace("\"", "\"\"") + "\""
     }
 
-    private fun downloadsCollectionUri(): Uri {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 29+
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI
-        } else {
-            // API 28 fallback
-            MediaStore.Files.getContentUri("external")
+    private fun writeCsv(os: OutputStream, header: List<String>, rows: List<List<Any>>) {
+        OutputStreamWriter(os, StandardCharsets.UTF_8).use { w ->
+            w.write(header.joinToString(",") { csvEscape(it) })
+            w.write("\n")
+            rows.forEach { row ->
+                w.write(row.joinToString(",") { csvEscape(it) })
+                w.write("\n")
+            }
+            w.flush()
         }
     }
 
     private fun writeCsvToDownloads(displayName: String, header: List<String>, rows: List<List<Any>>): Uri {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // API 28 has no MediaStore.Downloads; write the file directly (needs WRITE_EXTERNAL_STORAGE).
+            @Suppress("DEPRECATION")
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            val file = File(dir, displayName)
+            file.outputStream().use { writeCsv(it, header, rows) }
+            return Uri.fromFile(file)
+        }
+
         val resolver = context.contentResolver
 
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
             put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Put into the Downloads folder on API 29+
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            } else {
-                // On API 28, RELATIVE_PATH is not supported. It will go to a default shared location.
-                // (Still accessible from file managers / Downloads apps depending on OEM.)
-            }
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
 
-        val uri = resolver.insert(downloadsCollectionUri(), values)
-            ?: throw IllegalStateException("Failed to create CSV")
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("Failed to create $displayName")
 
-        resolver.openOutputStream(uri, "w")!!.use { os ->
-            OutputStreamWriter(os, StandardCharsets.UTF_8).use { w ->
-                w.write(header.joinToString(",") { csvEscape(it) })
-                w.write("\n")
-                rows.forEach { row ->
-                    w.write(row.joinToString(",") { csvEscape(it) })
-                    w.write("\n")
-                }
-                w.flush()
-            }
+        try {
+            val os = resolver.openOutputStream(uri, "w")
+                ?: throw IllegalStateException("Failed to open $displayName")
+            os.use { writeCsv(it, header, rows) }
+        } catch (t: Throwable) {
+            // Don't leave a pending, half-written entry behind.
+            resolver.delete(uri, null, null)
+            throw t
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-        }
+        values.clear()
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
 
         return uri
     }
@@ -315,7 +319,7 @@ class CsvExporter(private val context: Context) {
     ): List<Pair<String, Uri>> {
         val header = listOf(
             "Date", "Source(s)", "Timezone", "Start Time", "End Time",
-            "Light Sleep (min)", "Deep Sleep (min)", "REM Sleep (min)", "Awake (min)"
+            "Light Sleep (min)", "Deep Sleep (min)", "REM Sleep (min)", "Awake (min)", "Total Sleep (min)"
         )
         val tz = HealthConnectManager(context).getTimeZone()
 
@@ -337,7 +341,8 @@ class CsvExporter(private val context: Context) {
                 d.sleepData["Light sleep (min)"] ?: "",
                 d.sleepData["Deep sleep (min)"] ?: "",
                 d.sleepData["REM sleep (min)"] ?: "",
-                d.sleepData["Awake (min)"] ?: ""
+                d.sleepData["Awake (min)"] ?: "",
+                d.sleepData["Total sleep (min)"] ?: ""
             )
         }
 
@@ -423,7 +428,7 @@ class CsvExporter(private val context: Context) {
         val hasAny = dailyData.values.any { it.nutritionData.isNotEmpty() }
         if (!hasAny) return emptyList()
 
-        val allColumns = dailyData.values.flatMap { it.nutritionData.keys }.toSet().sorted()
+        val allColumns = dailyData.values.flatMap { it.nutritionData.keys }.toSet().minus("Source(s)").sorted()
         val header = listOf("Date", "Source(s)", "Timezone") + allColumns
 
         val groups = mutableMapOf<String, MutableList<List<Any>>>()
@@ -455,7 +460,7 @@ class CsvExporter(private val context: Context) {
         val hasAny = dailyData.values.any { it.cycleTrackingData.isNotEmpty() }
         if (!hasAny) return emptyList()
 
-        val allColumns = dailyData.values.flatMap { it.cycleTrackingData.keys }.toSet().sorted()
+        val allColumns = dailyData.values.flatMap { it.cycleTrackingData.keys }.toSet().minus("Source(s)").sorted()
         val header = listOf("Date", "Source(s)", "Timezone") + allColumns
 
         val groups = mutableMapOf<String, MutableList<List<Any>>>()

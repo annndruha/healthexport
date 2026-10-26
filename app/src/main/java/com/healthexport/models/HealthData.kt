@@ -70,6 +70,12 @@ data class ExportConfig(
     val daysBack: Int = 7
 )
 
+data class HealthReadResult(
+    val data: Map<String, DailyHealthData>,
+    val warnings: List<String>,
+    val historyGranted: Boolean
+)
+
 data class MinMaxAvg(
     val min: Double? = null,
     val max: Double? = null,
