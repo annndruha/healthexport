@@ -1,5 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.HealthConnectExporter" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.HealthExport" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">@color/hc_primary</item>
+        <item name="colorOnPrimary">@color/hc_on_primary</item>
+        <item name="colorPrimaryContainer">@color/hc_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/hc_on_primary_container</item>
+
+        <!-- Switches and other secondary controls use the same blue -->
+        <item name="colorSecondary">@color/hc_primary</item>
+        <item name="colorOnSecondary">@color/hc_on_primary</item>
+        <item name="colorSecondaryContainer">@color/hc_primary_container</item>
+        <item name="colorOnSecondaryContainer">@color/hc_on_primary_container</item>
+        <item name="colorControlActivated">@color/hc_primary</item>
+        <item name="colorAccent">@color/hc_primary</item>
+
+        <item name="android:colorBackground">@color/hc_background</item>
+        <item name="colorSurface">@color/hc_background</item>
+        <item name="colorOnSurface">@color/hc_text</item>
+        <item name="colorOnBackground">@color/hc_text</item>
+        <item name="colorOnSurfaceVariant">@color/hc_text_secondary</item>
+        <item name="android:textColorPrimary">@color/hc_text</item>
+        <item name="android:textColorSecondary">@color/hc_text_secondary</item>
+
+        <item name="android:statusBarColor">@color/hc_background</item>
+        <item name="android:windowLightStatusBar">@bool/light_status_bar</item>
+    </style>
 </resources>

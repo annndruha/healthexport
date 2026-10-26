@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Health Connect-like palette, dark theme -->
+    <color name="hc_primary">#8AB4F8</color>
+    <color name="hc_on_primary">#002F66</color>
+    <color name="hc_primary_container">#1F4F8F</color>
+    <color name="hc_on_primary_container">#D8E6FD</color>
+
+    <color name="hc_background">#001F2B</color>
+    <color name="hc_card">#003144</color>
+    <color name="hc_card_stroke">#0E4A63</color>
+
+    <color name="hc_title">#D8E6FD</color>
+    <color name="hc_text">#E1EEF5</color>
+    <color name="hc_text_secondary">#A9C3D0</color>
+</resources>

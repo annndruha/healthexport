@@ -142,9 +142,9 @@ class MainActivity : AppCompatActivity() {
         healthConnectManager = HealthConnectManager(this)
 
         bindViews()
-        setupCategoryExpansion()
 
         loadPrefsIntoUi()
+        setupCategories()
         applyAsterisks()
         setupListeners()
 
@@ -239,24 +239,100 @@ class MainActivity : AppCompatActivity() {
         defaultStatusColors = txtStatus.textColors
     }
 
-    private fun setupCategoryExpansion() {
-        checkCategoryActivity.setOnCheckedChangeListener { _, checked ->
-            layoutActivitySubtypes.visibility = if (checked) View.VISIBLE else View.GONE
+    // -------------------------
+    // Categories
+    // -------------------------
+
+    private class Category(
+        val title: String,
+        val header: CheckBox,
+        val content: LinearLayout,
+        val items: List<CheckBox>
+    )
+
+    private lateinit var categories: List<Category>
+    private var syncingCategories = false
+
+    /**
+     * A checked header means "export this category" and needs at least one checked item:
+     * unchecking the last item turns the category off (the list stays open, so checking an item
+     * turns it back on), and turning on a category with nothing selected selects all its items.
+     * Only the user's header toggle expands/collapses the list.
+     */
+    private fun setupCategories() {
+        categories = listOf(
+            Category(
+                "Activity", checkCategoryActivity, layoutActivitySubtypes,
+                listOf(
+                    checkActiveCalories, checkDistance, checkElevationGained, checkExercise,
+                    checkFloorsClimbed, checkPower, checkSpeed, checkSteps, checkTotalCalories,
+                    checkVO2Max, checkWheelchairPushes
+                )
+            ),
+            Category(
+                "Body Measurements", checkCategoryBodyMeasurements, layoutBodyMeasurementsSubtypes,
+                listOf(checkBodyFat, checkBoneMass, checkHeight, checkLeanBodyMass, checkWeight)
+            ),
+            Category(
+                "Cycle Tracking", checkCategoryCycleTracking, layoutCycleTrackingSubtypes,
+                listOf(checkCervicalMucus, checkMenstruation, checkOvulationTest, checkSexualActivity)
+            ),
+            Category(
+                "Nutrition", checkCategoryNutrition, layoutNutritionSubtypes,
+                listOf(checkHydration, checkNutrition)
+            ),
+            Category(
+                "Sleep", checkCategorySleep, layoutSleepSubtypes,
+                listOf(checkSleepSession)
+            ),
+            Category(
+                "Vitals", checkCategoryVitals, layoutVitalsSubtypes,
+                listOf(
+                    checkBloodGlucose, checkBloodPressure, checkBodyTemperature, checkHeartRate,
+                    checkHeartRateVariability, checkOxygenSaturation, checkRespiratoryRate,
+                    checkRestingHeartRate
+                )
+            )
+        )
+
+        categories.forEach { c ->
+            // Saved state may have a category on with nothing selected.
+            if (c.header.isChecked && c.items.none { it.isChecked }) c.header.isChecked = false
+            c.content.visibility = if (c.header.isChecked) View.VISIBLE else View.GONE
+            renderCategoryTitle(c)
+
+            c.header.setOnCheckedChangeListener { _, checked ->
+                if (syncingCategories) return@setOnCheckedChangeListener
+                if (checked && c.items.none { it.isChecked }) {
+                    syncingCategories = true
+                    c.items.forEach { it.isChecked = true }
+                    syncingCategories = false
+                }
+                c.content.visibility = if (checked) View.VISIBLE else View.GONE
+                renderCategoryTitle(c)
+            }
+
+            c.items.forEach { item ->
+                item.setOnCheckedChangeListener { _, _ ->
+                    if (syncingCategories) return@setOnCheckedChangeListener
+                    val anySelected = c.items.any { it.isChecked }
+                    if (c.header.isChecked != anySelected) {
+                        syncingCategories = true
+                        c.header.isChecked = anySelected
+                        syncingCategories = false
+                    }
+                    renderCategoryTitle(c)
+                }
+            }
         }
-        checkCategoryBodyMeasurements.setOnCheckedChangeListener { _, checked ->
-            layoutBodyMeasurementsSubtypes.visibility = if (checked) View.VISIBLE else View.GONE
-        }
-        checkCategoryCycleTracking.setOnCheckedChangeListener { _, checked ->
-            layoutCycleTrackingSubtypes.visibility = if (checked) View.VISIBLE else View.GONE
-        }
-        checkCategoryNutrition.setOnCheckedChangeListener { _, checked ->
-            layoutNutritionSubtypes.visibility = if (checked) View.VISIBLE else View.GONE
-        }
-        checkCategorySleep.setOnCheckedChangeListener { _, checked ->
-            layoutSleepSubtypes.visibility = if (checked) View.VISIBLE else View.GONE
-        }
-        checkCategoryVitals.setOnCheckedChangeListener { _, checked ->
-            layoutVitalsSubtypes.visibility = if (checked) View.VISIBLE else View.GONE
+    }
+
+    private fun renderCategoryTitle(c: Category) {
+        val selected = c.items.count { it.isChecked }
+        c.header.text = if (c.header.isChecked) {
+            "${c.title}  ·  $selected of ${c.items.size} selected"
+        } else {
+            "${c.title}  ·  not exported"
         }
     }
 
@@ -328,14 +404,6 @@ class MainActivity : AppCompatActivity() {
         checkRespiratoryRate.isChecked = prefs.getBoolean("includeRespiratoryRate", false)
 
         checkRestingHeartRate.isChecked = prefs.getBoolean("includeRestingHeartRate", true)
-
-        // Expand/collapse to match saved category state
-        layoutActivitySubtypes.visibility = if (checkCategoryActivity.isChecked) View.VISIBLE else View.GONE
-        layoutBodyMeasurementsSubtypes.visibility = if (checkCategoryBodyMeasurements.isChecked) View.VISIBLE else View.GONE
-        layoutCycleTrackingSubtypes.visibility = if (checkCategoryCycleTracking.isChecked) View.VISIBLE else View.GONE
-        layoutNutritionSubtypes.visibility = if (checkCategoryNutrition.isChecked) View.VISIBLE else View.GONE
-        layoutSleepSubtypes.visibility = if (checkCategorySleep.isChecked) View.VISIBLE else View.GONE
-        layoutVitalsSubtypes.visibility = if (checkCategoryVitals.isChecked) View.VISIBLE else View.GONE
     }
 
     private fun applyAsterisks() {
@@ -358,6 +426,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnExportCsv.setOnClickListener {
+            if (categories.none { it.header.isChecked }) {
+                showStatus("Nothing to export: select at least one data type", StatusKind.WARNING)
+                return@setOnClickListener
+            }
             if (!exportInProgress.compareAndSet(false, true)) {
                 showStatus("Export already in progress", StatusKind.WARNING)
                 return@setOnClickListener
@@ -477,7 +549,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildConfigFromUi(): ExportConfig {
-        // A collapsed (unchecked) category exports nothing, whatever its sub-checkboxes say.
+        // An unchecked category exports nothing, whatever its items say (they are kept for when it's turned back on).
         val act = checkCategoryActivity.isChecked
         val body = checkCategoryBodyMeasurements.isChecked
         val cycle = checkCategoryCycleTracking.isChecked
