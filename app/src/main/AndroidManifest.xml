@@ -61,7 +61,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="Health Export"
-        android:theme="@style/Theme.Material3.DayNight">
+        android:theme="@style/Theme.HealthExport">
 
         <activity
             android:name=".MainActivity"

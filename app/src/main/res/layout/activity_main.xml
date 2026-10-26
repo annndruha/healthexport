@@ -14,18 +14,31 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
+            android:layout_marginTop="8dp"
             android:text="Health Connect to CSV"
             android:textSize="24sp"
+            android:textColor="@color/hc_title"
             android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="20dp"
+            android:text="Export your health data to CSV files"
+            android:textColor="@color/hc_text_secondary"
+            android:textSize="14sp" />
 
         <!-- Health Connect access -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -38,6 +51,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
                     android:text="Health Connect access"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <TextView
@@ -48,6 +62,7 @@
 
                 <Button
                     android:id="@+id/btnGrantPermissions"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
@@ -55,6 +70,7 @@
 
                 <Button
                     android:id="@+id/btnGrantHistory"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Allow access to data older than 30 days" />
@@ -75,8 +91,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -90,6 +109,7 @@
                     android:layout_height="wrap_content"
                     android:text="Activity"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -176,8 +196,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -191,6 +214,7 @@
                     android:layout_height="wrap_content"
                     android:text="Body Measurements"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -241,8 +265,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -256,6 +283,7 @@
                     android:layout_height="wrap_content"
                     android:text="Cycle Tracking"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -300,8 +328,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -315,6 +346,7 @@
                     android:layout_height="wrap_content"
                     android:text="Nutrition"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -347,8 +379,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -362,6 +397,7 @@
                     android:layout_height="wrap_content"
                     android:text="Sleep"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -388,8 +424,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -403,6 +442,7 @@
                     android:layout_height="wrap_content"
                     android:text="Vitals"
                     android:textSize="16sp"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -481,8 +521,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp"
-            app:cardCornerRadius="8dp"
-            app:cardElevation="4dp">
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp"
+            app:cardBackgroundColor="@color/hc_card"
+            app:strokeColor="@color/hc_card_stroke"
+            app:strokeWidth="1dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -495,6 +538,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="8dp"
                     android:text="Date Range"
+                    android:textColor="@color/hc_title"
                     android:textStyle="bold" />
 
                 <Spinner
@@ -539,9 +583,11 @@
         <Button
             android:id="@+id/btnExportCsv"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="64dp"
+            android:layout_marginTop="8dp"
             android:layout_marginBottom="8dp"
-            android:text="Export CSV to Downloads" />
+            android:text="Export CSV to Downloads"
+            android:textSize="16sp" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -557,6 +603,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:max="1000"
+            android:progressBackgroundTint="@color/hc_primary_container"
+            android:progressTint="@color/hc_primary"
             android:visibility="gone" />
 
         <TextView
