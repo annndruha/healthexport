@@ -14,6 +14,7 @@ import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -22,8 +23,12 @@ class CsvExporter(private val context: Context) {
     enum class SplitMode { NONE, BY_MONTH, BY_YEAR }
 
     data class ExportResult(
-        val files: List<Pair<String, Uri>> // displayName -> uri
+        val files: List<Pair<String, Uri>>, // displayName -> uri
+        val location: String
     )
+
+    // Every file of one export shares the moment it started, e.g. "2026-10-26_22-09_Vitals.csv".
+    private val filePrefix = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm_"))
 
     private val dayFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private val monthFmt = DateTimeFormatter.ofPattern("yyyy-MM")
@@ -48,8 +53,13 @@ class CsvExporter(private val context: Context) {
         if (includeNutrition) out += exportNutrition(dailyData, splitMode)
         if (includeCycle) out += exportCycle(dailyData, splitMode)
 
-        return ExportResult(out)
+        return ExportResult(out, downloadsLocation())
     }
+
+    @Suppress("DEPRECATION")
+    private fun downloadsLocation(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) "Internal storage/Download"
+        else Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
 
     // -------------------------
     // Splitting helpers
@@ -94,7 +104,8 @@ class CsvExporter(private val context: Context) {
         }
     }
 
-    private fun writeCsvToDownloads(displayName: String, header: List<String>, rows: List<List<Any>>): Uri {
+    /** Returns the name the file was actually saved under (the system may add " (1)") and its uri. */
+    private fun writeCsvToDownloads(displayName: String, header: List<String>, rows: List<List<Any>>): Pair<String, Uri> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // API 28 has no MediaStore.Downloads; write the file directly (needs WRITE_EXTERNAL_STORAGE).
             @Suppress("DEPRECATION")
@@ -102,7 +113,7 @@ class CsvExporter(private val context: Context) {
             dir.mkdirs()
             val file = File(dir, displayName)
             file.outputStream().use { writeCsv(it, header, rows) }
-            return Uri.fromFile(file)
+            return displayName to Uri.fromFile(file)
         }
 
         val resolver = context.contentResolver
@@ -131,7 +142,9 @@ class CsvExporter(private val context: Context) {
         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
         resolver.update(uri, values, null, null)
 
-        return uri
+        val savedName = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        return (savedName ?: displayName) to uri
     }
 
     private fun fmtNum(v: Any?): String =
@@ -248,8 +261,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Activity$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Activity$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 
@@ -304,8 +317,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Body_Measurements$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Body_Measurements$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 
@@ -348,8 +361,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Sleep$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Sleep$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 
@@ -410,8 +423,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Vitals$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Vitals$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 
@@ -446,8 +459,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Nutrition$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Nutrition$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 
@@ -478,8 +491,8 @@ class CsvExporter(private val context: Context) {
 
         return groups.entries.sortedBy { it.key }.map { (k, rows) ->
             val suffix = fileSuffixForKey(splitMode, k)
-            val name = "Cycle_Tracking$suffix.csv"
-            name to writeCsvToDownloads(name, header, rows)
+            val name = "${filePrefix}Cycle_Tracking$suffix.csv"
+            writeCsvToDownloads(name, header, rows)
         }
     }
 }

@@ -73,6 +73,7 @@ data class ExportConfig(
 data class HealthReadResult(
     val data: Map<String, DailyHealthData>,
     val warnings: List<String>,
+    val summary: List<String>,
     val historyGranted: Boolean
 )
 

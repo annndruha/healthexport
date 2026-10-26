@@ -550,13 +550,31 @@
             android:textAlignment="center"
             android:textSize="12sp" />
 
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:max="1000"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/txtProgress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAlignment="center"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/txtStatus"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="Status: Ready"
-            android:textAlignment="center" />
+            android:textIsSelectable="true" />
 
         <TextView
             android:id="@+id/txtLastExport"
@@ -564,22 +582,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Last export: Never"
-            android:textAlignment="center"
-            android:textSize="12sp" />
-
-        <ProgressBar
-            android:id="@+id/progressBar"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/txtDeveloperInfo"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Developer: Quentin Yougoubare&#10;teqxnology@gmail.com"
             android:textAlignment="center"
             android:textSize="12sp" />
 
