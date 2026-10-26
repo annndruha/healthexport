@@ -64,7 +64,7 @@ Build and install from source with Android Studio.
 1. In the app, tap **Grant Health Connect permissions**
 2. Allow read access for the data you want to export
 
-The **Health Connect access** card shows how many data types are allowed. You can change permissions later in Health Connect → App permissions → Health Export.
+The **Health Connect access** card shows how many data types are allowed. You can change permissions later in Health Connect → App permissions → Health to CSV.
 
 ✅ Without permission, that data type is skipped (the export report lists it).
 
