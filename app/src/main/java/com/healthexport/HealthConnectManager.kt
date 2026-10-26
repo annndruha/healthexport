@@ -14,6 +14,7 @@ import com.healthexport.models.DailyHealthData
 import com.healthexport.models.ExerciseData
 import com.healthexport.models.ExportConfig
 import com.healthexport.models.HealthReadResult
+import com.healthexport.models.TypeCoverage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -192,7 +193,14 @@ class HealthConnectManager(private val context: Context) {
                 )
             }
 
-            HealthReadResult(data, s.warnings(), s.summary(), historyGranted)
+            HealthReadResult(
+                data = data,
+                warnings = s.warnings(),
+                coverage = s.coverage(),
+                fromDay = startDay.format(dayFmt),
+                toDay = today.format(dayFmt),
+                historyGranted = historyGranted
+            )
         }
 
     // -------------------------
@@ -708,13 +716,8 @@ class HealthConnectManager(private val context: Context) {
             if (last == null || day > last) c.last = day
         }
 
-        fun summary(): List<String> = buildList {
-            add("Period: $startDay … ${endDayExclusive.minusDays(1)}")
-            add("Data older than 30 days: " + if (historyGranted) "allowed" else "NOT allowed")
-            coverage.forEach { (label, c) ->
-                add(if (c.count == 0) "$label: no data" else "$label: ${c.count} ${c.unit}, ${c.first} … ${c.last}")
-            }
-        }
+        fun coverage(): List<TypeCoverage> =
+            coverage.map { (label, c) -> TypeCoverage(label, c.unit, c.count, c.first, c.last) }
 
         /** Records a failed chunk, or rethrows when the whole export must stop. */
         fun handle(label: String, e: Exception) {
